@@ -2,37 +2,120 @@ import torch
 import torch.nn as nn
 from scipy.optimize import linear_sum_assignment
 import numpy as np
+from ot.sliced import sliced_wasserstein_distance
 
-class HungarianLossCustom(nn.Module):
-    def __init__(self, ce_coeff=0.1):
+
+class SlicedWasserstein(nn.Module):
+    def __init__(self, n_projections = 100, projs = None):
         super().__init__()
-        self.ce_coeff = ce_coeff
+        if projs is not None:
+            self.projs = projs
+        else:
+            self.n_projections = n_projections
+            self.projs = None
 
     def forward(self, set1, set2) -> torch.Tensor:
-        """ set1 is source, set2 is prediceted """
-        """ set1, set2: (bs, N, 3)"""
+        """ set1, set2: (bs, N, C)"""
+        loss_batch = 0
+        for val, pred in zip(set1, set2):
+            a = ((val[:, 1] + val[:, 0])**2 / torch.sum((val[:, 1] + val[:, 0])**2 + 1e-8).unsqueeze(0)).clone().detach()
+            b = ((pred[:, 1] + pred[:, 0])**2 / torch.sum((pred[:, 1] + pred[:, 0])**2 + 1e-8).unsqueeze(0)).clone().detach()
+            
+            if self.projs is not None:
+                loss_batch += sliced_wasserstein_distance(val, pred, a, b, projections=self.projs)
+            else:
+                loss_batch += sliced_wasserstein_distance(val, pred, a, b, n_projections=self.n_projections)
+                
+        return loss_batch
+
+class HungarianLossDimensionMatching(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, set1, set2) -> torch.Tensor:
+        """ set1 is source, set2 is predicted """
+        labels = torch.argmax(set2[:, :, 2:], axis = 2) # bs x n
+        max_dim = set2.shape[2] - 2
+        
+        total_loss = 0
+        
+        for dim in range(max_dim):
+            mask = (labels == dim).unsqueeze(2).repeat(1, 1, set2.shape[2])
+            set2_cur = set2 * mask
+            set1_cur = set1 * (set1[:, :, 2] == dim).unsqueeze(2).repeat(1, 1, set1.shape[2])
+         
+            set2_cur = set2_cur[:, :, :2]
+            set1_cur = set1_cur[:, :, :2]   
+                
+            set2_cur_projected = set2_cur
+            set2_cur_projected[:, :, 0] += torch.sqrt(set2_cur_projected[:, :, 1] + 1e-8) / 2
+            set2_cur_projected[:, :, 1] = 0
+            
+            set1_cur_projected = set1_cur
+            set1_cur_projected[:, :, 0] += torch.sqrt(set1_cur_projected[:, :, 1] + 1e-8) / 2
+            set1_cur_projected[:, :, 1] = 0
+            
+            #concat
+            set1_res = torch.cat((set1_cur, set2_cur_projected), axis=0)
+            set2_res = torch.cat((set2_cur, set1_cur_projected), axis=0)
+            
+            batch_dist = torch.cdist(set1_res, set2_res, 2)
+        
+            numpy_batch_dist = batch_dist.detach().cpu().numpy()            # bs x n x n
+            numpy_batch_dist[np.isnan(numpy_batch_dist)] = 1e6
+
+            indices = map(linear_sum_assignment, numpy_batch_dist)
+            indices = list(indices)
+
+            loss = [dist[row_idx, col_idx].mean() for dist, (row_idx, col_idx) in zip(batch_dist, indices)]
+            total_loss += torch.sum(torch.stack(loss))
+        
+        return total_loss
+
+class HungarianLossCustom(nn.Module):
+    def __init__(self, ce_coeff=10, use_weight=False, distance_penalty=10):
+        super().__init__()
+        self.ce_coeff = ce_coeff
+        self.weight = use_weight
+        self.distance_penalty = distance_penalty
+
+    def forward(self, set1, set2) -> torch.Tensor:
+        """ set1 is source, set2 is predicted """
         batch_dist = torch.cdist(set1[:, :, :2], set2[:, :, :2], 2)
+        
+        if self.weight:
+            weights = torch.exp(self.distance_penalty * set1[:, :, 1].clone().detach()) # bs x n
+            weights = weights.unsqueeze(2).repeat(1, 1, set2.shape[1]) # bs x n x n
+            
+            batch_dist = torch.mul(batch_dist, weights)
+        
         numpy_batch_dist = batch_dist.detach().cpu().numpy()            # bs x n x n
         numpy_batch_dist[np.isnan(numpy_batch_dist)] = 1e6
-        
+       
         ce_loss = nn.CrossEntropyLoss(ignore_index=-1)
         
         indices = map(linear_sum_assignment, numpy_batch_dist)
         indices = list(indices)
+        
         loss = [dist[row_idx, col_idx].mean() for dist, (row_idx, col_idx) in zip(batch_dist, indices)]
-        #print(set2[0, :, 2:].shape, set1[0, :, 2].shape)
-        loss2 = [ce_loss(set2[i, :, 2:][col_idx], set1[i, :, 2].to(torch.long)) for i, (row_idx, col_idx) in enumerate(indices)]
+        
+        loss2 = 0
+        if self.ce_coeff != 0:
+            cur = [ce_loss(set2[i, :, 2:][col_idx], set1[i, :, 2].to(torch.long)) for i, (row_idx, col_idx) in enumerate(indices)]
+            loss2 = self.ce_coeff * torch.sum(torch.stack(cur)) 
+        
         # Sum over the batch (not mean, which would reduce the importance of sets in big batches)
-        total_loss = torch.sum(torch.stack(loss)) + self.ce_coeff * torch.sum(torch.stack(loss2)) 
-        #total_loss = torch.sum(torch.stack(loss))
+        total_loss = torch.sum(torch.stack(loss)) + loss2
+        
         return total_loss
 
+    
 class HungarianLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
     def forward(self, set1, set2) -> torch.Tensor:
-        """ set1, set2: (bs, N, 3)"""
+        """ set1, set2: (bs, N, C)"""
         batch_dist = torch.cdist(set1, set2, 2)
         numpy_batch_dist = batch_dist.detach().cpu().numpy()            # bs x n x n
         numpy_batch_dist[np.isnan(numpy_batch_dist)] = 1e6
@@ -42,19 +125,34 @@ class HungarianLoss(nn.Module):
         # Sum over the batch (not mean, which would reduce the importance of sets in big batches)
         total_loss = torch.sum(torch.stack(loss))
         return total_loss
+
     
+class ChamferLossWeighted(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, set1, set2, w1, w2) -> torch.Tensor:
+        """ set1, set2: (bs, N, C)"""
+        dist = torch.cdist(set1, set2, 2)
+        out_dist, _ = torch.min(dist, dim=2)
+        out_dist2, _ = torch.min(dist, dim=1)
+        total_dist = (torch.sum(w1 * out_dist) + torch.sum(w2 * out_dist2)) / 2
+        return total_dist    
+    
+
 class ChamferLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
     def forward(self, set1, set2) -> torch.Tensor:
-        """ set1, set2: (bs, N, 3)"""
+        """ set1, set2: (bs, N, C)"""
         dist = torch.cdist(set1, set2, 2)
         out_dist, _ = torch.min(dist, dim=2)
         out_dist2, _ = torch.min(dist, dim=1)
-        total_dist = (torch.mean(out_dist) + torch.mean(out_dist2)) / 2
+        total_dist = (torch.sum(out_dist) + torch.sum(out_dist2)) / 2
         return total_dist
 
+    
 # Adapted from https://github.com/gpeyre/SinkhornAutoDiff
 class SinkhornDistance(nn.Module):
     r"""
@@ -79,6 +177,10 @@ class SinkhornDistance(nn.Module):
         self.reduction = reduction
 
     def forward(self, x, y):
+        # x, y : (bs, n_max, set_channels)
+        mask = (x != -1)
+        x = x * mask
+        y = y * mask
         # The Sinkhorn algorithm takes as input three variables :
         C = self._cost_matrix(x, y)  # Wasserstein cost function
         x_points = x.shape[-2]
@@ -87,20 +189,30 @@ class SinkhornDistance(nn.Module):
             batch_size = 1
         else:
             batch_size = x.shape[0]
-
+        
+        a = (x[:, :, 1]**2) / torch.sum(x[:, :, 1]**2, axis=1).unsqueeze(1)
+        
+        b = (y[:, :, 1]**2) / torch.sum(y[:, :, 1]**2, axis=1).unsqueeze(1)
         # both marginals are fixed with equal weights
-        mu = torch.empty(batch_size, x_points, dtype=torch.float,
-                         requires_grad=False).fill_(1.0 / x_points).squeeze()
-        nu = torch.empty(batch_size, y_points, dtype=torch.float,
-                         requires_grad=False).fill_(1.0 / y_points).squeeze()
+        
+        # mu, nu : (bs, n_max)
+        #mu = torch.empty(batch_size, x_points, dtype=torch.float,
+        #                 requires_grad=False).fill_(1.0 / x_points).squeeze()
+        #nu = torch.empty(batch_size, y_points, dtype=torch.float,
+        #                 requires_grad=False).fill_(1.0 / y_points).squeeze()
 
+        mu = a.clone().detach()
+        #print(torch.sum(mu, axis=1))
+        #print(mu)
+        nu = b.clone().detach()
+        
         u = torch.zeros_like(mu)
         v = torch.zeros_like(nu)
         # To check if algorithm terminates because of threshold
         # or max iterations reached
         actual_nits = 0
         # Stopping criterion
-        thresh = 1e-1
+        thresh = 1e-8
 
         # Sinkhorn iterations
         for i in range(self.max_iter):

@@ -75,16 +75,27 @@ class MultiHeadAttention(nn.Module):
         return outputs, attention_scores
 
 class TransformerLayer(nn.Module):
-    def __init__(self, embed_dim, fc_dim, num_heads, dropout = 0.1):
+    def __init__(self, embed_dim, fc_dim, num_heads, dropout = 0.0, activation = 'relu'):
         super().__init__()
         self.self_attention = MultiHeadAttention(embed_dim, num_heads, dropout)
-        self.feedforward = nn.Sequential(
-            nn.Linear(embed_dim, fc_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(fc_dim, embed_dim),
-            nn.Dropout(dropout)
-        )
+        if activation == 'relu':
+            self.feedforward = nn.Sequential(
+                nn.Linear(embed_dim, fc_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(fc_dim, embed_dim),
+                nn.Dropout(dropout)
+            )
+        elif activation == 'gelu':
+            self.feedforward = nn.Sequential(
+                nn.Linear(embed_dim, fc_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(fc_dim, embed_dim),
+                nn.Dropout(dropout)
+            )
+        else:
+            raise NotImplementedError
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
 
@@ -95,7 +106,7 @@ class TransformerLayer(nn.Module):
         outputs = self.norm1(outputs)
         outputs = outputs + self.feedforward(outputs)
         outputs = self.norm2(outputs)
-        return outputs, attention_score    
+        return outputs, attention_score  
     
 def create_padding_mask(mask: Tensor):
     # tokens: (batch_size, length)
