@@ -27,8 +27,6 @@ class TopNGenerator(nn.Module):
         # during train we have n fixed but while inference we have to predict n somehow
         
         batch_size = latent.shape[0]
-        
-        #n, predicted_n, predicted_formula = super().forward(latent, n, extrapolation)
 
         angles = self.angle_mlp(latent)
         angles = angles / (torch.norm(angles, dim=1)[:, None] + 1e-5)

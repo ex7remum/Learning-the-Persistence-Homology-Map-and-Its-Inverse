@@ -75,9 +75,10 @@ class MultiHeadAttention(nn.Module):
         return outputs, attention_scores
 
 class TransformerLayer(nn.Module):
-    def __init__(self, embed_dim, fc_dim, num_heads, dropout = 0.0, activation = 'relu'):
+    def __init__(self, embed_dim, fc_dim, num_heads, dropout = 0.0, activation = 'relu', use_skip = True):
         super().__init__()
         self.self_attention = MultiHeadAttention(embed_dim, num_heads, dropout)
+        self.skip = use_skip
         if activation == 'relu':
             self.feedforward = nn.Sequential(
                 nn.Linear(embed_dim, fc_dim),
@@ -106,7 +107,10 @@ class TransformerLayer(nn.Module):
         outputs = self.norm1(outputs)
         outputs = outputs + self.feedforward(outputs)
         outputs = self.norm2(outputs)
-        return outputs, attention_score  
+        if self.skip:
+            return outputs + inputs, attention_score    
+        else:
+            return outputs, attention_score  
     
 def create_padding_mask(mask: Tensor):
     # tokens: (batch_size, length)

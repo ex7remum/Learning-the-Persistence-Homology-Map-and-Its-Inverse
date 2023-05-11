@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from scipy.optimize import linear_sum_assignment
 import numpy as np
+import ot
 from ot.sliced import sliced_wasserstein_distance
 
 
@@ -28,6 +29,28 @@ class SlicedWasserstein(nn.Module):
                 
         return loss_batch
 
+    
+class W2WeightedLoss(nn.Module):
+    def __init__(self, custom_weights=True):
+        super().__init__()
+        self.custom_weights = custom_weights
+
+    def forward(self, set1, set2) -> torch.Tensor:
+        """ set1, set2: (bs, N, C)"""
+        loss_batch = 0
+        for val, pred in zip(set1, set2):
+            M = ot.dist(val, pred)
+            
+            if self.custom_weights:
+                a = nn.functional.normalize((val[:, 1] + val[:, 0])**2, dim=0, p=1).clone().detach()
+                b = nn.functional.normalize((pred[:, 1] + pred[:, 0])**2, dim=0, p=1).clone().detach()
+                loss_batch += ot.emd2(a, b, M)
+            else:
+                loss_batch += ot.emd2(M)
+                
+        return loss_batch
+
+    
 class HungarianLossDimensionMatching(nn.Module):
     def __init__(self):
         super().__init__()
@@ -72,6 +95,7 @@ class HungarianLossDimensionMatching(nn.Module):
         
         return total_loss
 
+    
 class HungarianLossCustom(nn.Module):
     def __init__(self, ce_coeff=10, use_weight=False, distance_penalty=10):
         super().__init__()
@@ -149,7 +173,7 @@ class ChamferLoss(nn.Module):
         dist = torch.cdist(set1, set2, 2)
         out_dist, _ = torch.min(dist, dim=2)
         out_dist2, _ = torch.min(dist, dim=1)
-        total_dist = (torch.sum(out_dist) + torch.sum(out_dist2)) / 2
+        total_dist = (torch.mean(out_dist) + torch.mean(out_dist2)) / 2
         return total_dist
 
     
