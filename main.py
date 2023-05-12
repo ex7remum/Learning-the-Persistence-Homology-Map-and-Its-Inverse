@@ -40,20 +40,20 @@ if __name__ == "__main__":
     criterion_hungarian = HungarianLoss()
     mse = MSELoss(reduction='mean')
 
-    encoder_pd = TransformerEncoder(n_in=set_channels, embed_dim=64, fc_dim=128, num_heads=4, num_layers=5, n_out_enc=512,
+    encoder_pd = modules.TransformerEncoder(n_in=set_channels, embed_dim=64, fc_dim=128, num_heads=4, num_layers=5, n_out_enc=512,
                             dropout=0.1, reduction="attention", use_skip=True)
     
-    generator = TopNGenerator(set_channels=3, cosine_channels=32, max_n=n_max, latent_dim=512)
+    generator = generators.TopNGenerator(set_channels=3, cosine_channels=32, max_n=n_max, latent_dim=512)
     
-    decoder_pd = TransformerDecoder(n_in=3, latent_dim=512, fc_dim=128, num_heads=4, num_layers=5, n_out=3, generator=generator, 
+    decoder_pd = modules.TransformerDecoder(n_in=3, latent_dim=512, fc_dim=128, num_heads=4, num_layers=5, n_out=3, generator=generator, 
                      n_out_lin=128, n_hidden=256, num_layers_lin = 3, dropout = 0.1, use_conv=True)
 
-    encoder_data = TransformerEncoder(n_in=2, embed_dim=512, fc_dim=1024, num_heads=8, num_layers=5, n_out_enc=512,
+    encoder_data = modules.TransformerEncoder(n_in=2, embed_dim=512, fc_dim=1024, num_heads=8, num_layers=5, n_out_enc=512,
                                 dropout=0.1, reduction="attention", use_skip=True)
     
-    decoder_data = MLPDecoder(n_in=512, n_hidden=1024, n_out=n_points * 2, num_layers=3, set_channels=2)
+    decoder_data = modules.MLPDecoder(n_in=512, n_hidden=1024, n_out=n_points * 2, num_layers=3, set_channels=2)
 
-    model = PDNet(encoder_data, decoder_data, encoder_pd, decoder_pd).to(device)
+    model = PDNetOrbit5k(encoder_data, decoder_data, encoder_pd, decoder_pd).to(device)
 
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler1 = LinearLR(optimizer, start_factor=0.0000001, total_iters=warmup_iters)
