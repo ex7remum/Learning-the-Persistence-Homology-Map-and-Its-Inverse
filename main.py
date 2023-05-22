@@ -45,7 +45,7 @@ if __name__ == "__main__":
     
     generator = generators.TopNGenerator(set_channels=3, cosine_channels=32, max_n=n_max, latent_dim=512)
     
-    decoder_pd = modules.TransformerDecoder(n_in=3, latent_dim=512, fc_dim=128, num_heads=4, num_layers=5, n_out=3, generator=generator, 
+    decoder_pd = modules.TransformerDecoder(n_in=3, latent_dim=512, fc_dim=128, num_heads=8, num_layers=5, n_out=3, generator=generator, 
                      n_out_lin=128, n_hidden=256, num_layers_lin = 3, dropout = 0.1, use_conv=True)
 
     encoder_data = modules.TransformerEncoder(n_in=2, embed_dim=512, fc_dim=1024, num_heads=8, num_layers=5, n_out_enc=512,
@@ -64,9 +64,14 @@ if __name__ == "__main__":
     model_classificator.load_state_dict(checkpoint)
     
     loss_train, loss_test = [], []
+    gamma = 1
+    alpha = 0.05
+
     for epoch_idx in range(n_epochs):
+        if epoch_idx % 100 == 0:
+            gamma *= 10
         train_loss, test_loss = train_epoch_full(model, dataloader_train, dataloader_test, optimizer, 
-                                                 criterion, crit_chamfer, progress=False)
+                                                 criterion, crit_chamfer, progress=False, alpha=alpha, dif_lambda=gamma)
         loss_train.append(train_loss)
         loss_test.append(test_loss)
 

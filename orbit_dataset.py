@@ -42,7 +42,7 @@ def generate_orbits(m, rs=[2.5, 3.5, 4.0, 4.1, 4.3], n=300, random_state=None):
         points_0 = random_state.uniform(size=(m,2))
 
         for i, point_0 in enumerate(points_0):
-            orbits[j*m + i] = generate_orbit(points_0[i], rs[j])
+            orbits[j*m + i] = generate_orbit(points_0[i], rs[j], n)
             
     return orbits
 
