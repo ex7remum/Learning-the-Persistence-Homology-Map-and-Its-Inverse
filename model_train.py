@@ -154,3 +154,29 @@ def train_epoch_full(model, dataloader_train, dataloader_test, optimizer, criter
             break
             
     return loss_train, loss_test
+
+
+def train_epoch_data_to_pd(model, dataloader_train, dataloader_test, optimizer, criterion):
+    model.train()
+    loss = 0
+    for batch in dataloader_train:
+        src_pd, mask, labels, src_data = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3].to(device)
+        tgt_pd = model(src_data, mask)
+        loss_batch = criterion(src_pd.to(torch.float), tgt_pd)
+        loss_batch.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+        loss += loss_batch.detach().cpu()
+    loss_train = loss / len(dataloader_train.dataset)
+    
+    loss = 0
+    model.eval()
+    for batch in dataloader_test:    
+        with torch.no_grad():
+            src_pd, mask, labels, src_data = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3].to(device)
+            tgt_pd = model(src_data, mask)
+            loss_batch = criterion(src_pd.to(torch.float), tgt_pd)
+            loss += loss_batch
+    loss_test = loss / len(dataloader_test.dataset)
+            
+    return loss_train, loss_test

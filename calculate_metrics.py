@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from utils import HungarianLoss, ChamferLoss
+import ot
 
 def pd_to_pd_ae_metrics(model_approximator, model_classificator, dataloader_train, dataloader_test):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -99,3 +100,51 @@ def orbit5k_metrics(model, model_classificator, dataloader_train, dataloader_tes
     w2 /= len(dataloader_test.dataset)
     chamfer /= len(dataloader_test.dataset)
     return accuracy_test_approx, w2.item(), chamfer.item()
+
+
+def data_to_pd_metrics(model, model_size, model_classificator, dataloader, name, n_max):
+    model.eval()
+    model_size.eval()
+    model_classificator.eval()
+    
+    correct_orig, correct_pred = 0, 0
+    W2_pred, W2_orig = 0, 0
+    
+    for batch in dataloader:
+        with torch.no_grad():
+            src_pd, mask, labels, src_data = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3].to(device)
+            dumb_mask = (torch.zeros((src_data.shape[0], src_data.shape[1])) + 1.).to(torch.long).to(device)
+            pred = model_size(src_data, dumb_mask)
+            sizes = torch.ceil(pred)
+            real_sizes = torch.sum(mask, dim=1)
+            pred_mask = torch.zeros(mask.shape).to(torch.long).to(device)
+            for i in range(mask.shape[0]):
+                if sizes[i] <= 0:
+                    sizes[i] = 1
+                if sizes[i] > n_max:
+                    sizes[i] = n_max              
+                pred_mask[i, :int(sizes[i])] = 1
+                
+            tgt_pd_pred = model(src_data, pred_mask)
+            y_hat = model_classificator(tgt_pd_pred, pred_mask).argmax(dim=1)
+            correct_pred += int((y_hat == labels).sum())
+            
+            tgt_pd_orig = model(src_data, mask)
+            y_hat = model_classificator(tgt_pd_orig, mask).argmax(dim=1)
+            correct_orig += int((y_hat == labels).sum())
+            
+            #calculate W2
+            for i in range(src_pd.shape[0]):
+                M = ot.dist(tgt_pd_orig[i][:real_sizes[i]], src_pd[i][:real_sizes[i]])
+                W2_orig += ot.emd2(torch.tensor([]), torch.tensor([]), M)
+                M = ot.dist(tgt_pd_pred[i][:int(sizes[i])], src_pd[i][:real_sizes[i]])
+                W2_pred += ot.emd2(torch.tensor([]), torch.tensor([]), M)
+                
+    #add wandb logging
+    correct_pred /= len(dataloader.dataset)
+    correct_orig /= len(dataloader.dataset)
+    W2_orig /= len(dataloader.dataset)
+    W2_pred /= len(dataloader.dataset)
+    wandb.log({"correct orig": correct_orig, "correct pred": correct_pred})
+    wandb.log({"W2 orig": W2_orig.item(), "W2 pred": W2_pred.item()})
+    return

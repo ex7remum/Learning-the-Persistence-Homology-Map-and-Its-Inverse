@@ -329,7 +329,7 @@ class TransformerDecoder(nn.Module):
             self.output = MLP(dim_in=n_out_lin, width=last_mlp_width, dim_out=n_out, nb_layers=last_mlp_layers)
         
     def forward(self, latent, n_max, mask):
-        ref_set = self.set_generator(latent, n_max, mask)
+        ref_set = self.set_generator(latent, n_max)
         
         full_mask = _get_full_mask(ref_set, mask)
         
@@ -377,7 +377,7 @@ class GeneratorMLP(nn.Module):
         self.generator = generator
         
     def forward(self, latent, max_batch_len, mask):
-        latent = self.generator(latent, max_batch_len, mask)
+        latent = self.generator(latent, max_batch_len)
         # (bs, n_batch, n_in)
         z = self.mlp(latent)
         full_mask = _get_full_mask(z, mask)
