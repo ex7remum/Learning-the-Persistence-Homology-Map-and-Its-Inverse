@@ -40,7 +40,7 @@ class Attention(nn.Module):
         # attention_score: (batch_size, length, length)
         # attention: (batch_size, length, attention_dim)
 
-        return attention, attention_score    
+        return attention, attention_score
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout = 0.1):
@@ -101,17 +101,17 @@ class TransformerLayer(nn.Module):
         self.norm2 = nn.LayerNorm(embed_dim)
 
     def forward(self, inputs, mask = None):
-        attention, attention_score = self.self_attention(query=inputs, key=inputs, 
+        attention, attention_score = self.self_attention(query=inputs, key=inputs,
                                                          value=inputs, mask=mask)
         outputs = inputs + attention
         outputs = self.norm1(outputs)
         outputs = outputs + self.feedforward(outputs)
         outputs = self.norm2(outputs)
         if self.skip:
-            return outputs + inputs, attention_score    
+            return outputs + inputs, attention_score
         else:
-            return outputs, attention_score  
-    
+            return outputs, attention_score
+
 def create_padding_mask(mask: Tensor):
     # tokens: (batch_size, length)
     length = mask.shape[-1]

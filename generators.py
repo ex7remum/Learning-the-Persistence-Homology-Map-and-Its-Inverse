@@ -2,6 +2,7 @@ from layers import MLP
 import torch
 import torch.nn as nn
 from torch import Tensor
+import math
 
 class TopNGenerator(nn.Module):
     def __init__(self, set_channels: int, cosine_channels: int, max_n: int, latent_dim: int):
@@ -23,7 +24,7 @@ class TopNGenerator(nn.Module):
     def forward(self, latent: Tensor, n: int = None):
         """ latent: batch_size x d
             self.points: max_points x d"""
-        
+
         batch_size = latent.shape[0]
 
         angles = self.angle_mlp(latent)
@@ -44,7 +45,7 @@ class TopNGenerator(nn.Module):
         beta = self.lin2(selected_points.shape[1] * srted[:, :, None])
         modulated = alpha * selected_points + beta
         return modulated
-    
+
 class MLPGenerator(nn.Module):
     def __init__(self, set_channels : int, max_n : int, mlp_gen_hidden : int, n_layers : int, latent_dim : int):
         super().__init__()
@@ -67,7 +68,7 @@ class RandomSetGenerator(nn.Module):
         super().__init__()
         self.set_channels = set_channels
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        
+
     def forward(self, latent: Tensor, n: int):
         batch_size = latent.shape[0]
         points = torch.randn(batch_size, n, self.set_channels, dtype=torch.float).to(self.device)
