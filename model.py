@@ -50,16 +50,20 @@ class PDNetOrbit5k(nn.Module):
 
 # only getting
 class DataToPd(nn.Module):
-    def __init__(self, encoder_data: nn.Module, decoder_pd: nn.Module):
+    def __init__(self, encoder_data: nn.Module, decoder_pd: nn.Module, use_mask = True):
         super(DataToPd, self).__init__()
         self.encoder_data = encoder_data
         self.decoder_pd = decoder_pd
         self.output = nn.Softplus()
+        self.use_mask = use_mask
 
     def forward(self, X: Tensor, mask: Tensor):
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         dumb_mask = (torch.zeros((X.shape[0], X.shape[1])) + 1.).to(torch.long).to(device)
-        z_enc = self.encoder_data(X, dumb_mask)
+        if self.use_mask:
+            z_enc = self.encoder_data(X, dumb_mask)
+        else:
+            z_enc = self.encoder_data(X)
         z = self.decoder_pd(z_enc, mask.shape[1], mask)
         coords = self.output(z[:, :, :2]) # to be non-negative
         logits = z[:, :, 2:]
