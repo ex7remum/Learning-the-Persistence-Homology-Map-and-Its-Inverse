@@ -32,6 +32,13 @@ import time
     
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+class Identity(nn.Module):
+    def __init__(self):
+        super(Identity, self).__init__()
+        
+    def forward(self, x):
+        return x
+
 class PI_Net(nn.Module):
     def __init__(self, in_channels = 3):
         super(PI_Net, self).__init__()
@@ -135,15 +142,9 @@ def conv_pd(diagrams):
     return pd
 
 
-def get_datasets_pinet(dataloader, batch_size, is_train, filtration = '3D-rips', pixel_size = 0.006,
-                      birth_range = (0, 0.3), pers_range = (0, 0.3), sigma = 0.01):
+def get_datasets_pinet(dataloader, batch_size, is_train, filtration = '3D-rips', pimgr = None):
     all_diagrams, all_images, all_labels, pis = [], [], [], []
     vr = Rips()
-    
-    pimgr = PersistenceImager(pixel_size=pixel_size)
-    pimgr.birth_range = birth_range
-    pimgr.pers_range = pers_range
-    pimgr.kernel_params['sigma'] = sigma
     
     for batch in dataloader:
         images, labels = batch
@@ -233,7 +234,7 @@ def train_classifier_on_pds(dataloader_train, dataloader_test, n_max, real_pd, m
     print('Training classifier on ', add)
     model_pd = CustomPersformer(n_in = 3, embed_dim = 128, fc_dim = 256, num_heads = 8, num_layers = 5, n_out_enc = 10).to(device)
     crit = CrossEntropyLoss()
-    n_epochs = 300
+    n_epochs = 200
     lr = 1e-3
     optimizer = AdamW(model_pd.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -290,18 +291,27 @@ def train_classifier_on_pds(dataloader_train, dataloader_test, n_max, real_pd, m
 
 def train_full_image_model(dataloader_train, dataloader_test, n_max):
     print('Training full model')
-    encoder = torchvision.models.resnet18()
-    encoder.fc = nn.Linear(in_features=512, out_features=256)
-    generator = generators.TopNGenerator(set_channels=3, cosine_channels=32, max_n=n_max + 5, latent_dim=256)
-    decoder = modules.TransformerDecoder(n_in=3, latent_dim=256, fc_dim=512, num_heads=4, num_layers=5, n_out=3,
+    # if want pretrained
+    encoder = torchvision.models.resnet18(weights = torchvision.models.ResNet18_Weights.DEFAULT) 
+    encoder.fc = Identity()
+    #encoder = torchvision.models.resnet18()
+    
+    # if want freeze all layers in encoder
+    for param in encoder.parameters():
+        param.requires_grad = False
+                
+    #encoder.fc = nn.Linear(in_features=512, out_features=256)
+    
+    generator = generators.TopNGenerator(set_channels=3, cosine_channels=32, max_n=n_max + 5, latent_dim=512)
+    decoder = modules.TransformerDecoder(n_in=3, latent_dim=512, fc_dim=1024, num_heads=8, num_layers=5, n_out=3,
                                                 generator=generator, n_out_lin=128, n_hidden=256, num_layers_lin=1,
                                                 dropout = 0.1, use_conv=True)
     model = DataToPd(encoder, decoder, False).to(device)
 
     lr = 0.001
     warmup_iters = 10
-    n_epochs = 300 + warmup_iters
-    criterion = SlicedWasserstein(n_projections=150)
+    n_epochs = 200 + warmup_iters
+    criterion = SlicedWasserstein(n_projections=200)
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler1 = LinearLR(optimizer, start_factor=0.0001, total_iters=warmup_iters)
 
@@ -347,7 +357,7 @@ def train_pinet(dataloader_train, dataloader_test):
     pinet_model = PI_Net(in_channels = 1).to(device)
 
     crit = CrossEntropyLoss()
-    n_epochs = 300
+    n_epochs = 200
     lr = 1e-3
     optimizer = AdamW(pinet_model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = ReduceLROnPlateau(optimizer, patience=25, min_lr=1e-6, factor=0.5)
@@ -385,13 +395,8 @@ def train_pinet(dataloader_train, dataloader_test):
         
     return pinet_model
 
-def compute_metrics(dataloader_test, model, on_pds = True):
+def compute_metrics(dataloader_test, model, on_pds = True, pimgr = None):
     hung = HungarianLoss()
-
-    pimgr = PersistenceImager(pixel_size=0.02)
-    pimgr.birth_range = (0, 1)
-    pimgr.pers_range = (0, 1)
-    pimgr.kernel_params['sigma'] = 0.0005
     
     total_time, total_mse, W2 = 0, 0, 0
     for batch in dataloader_test:
@@ -473,7 +478,7 @@ def compute_accuracy(dataloader_train, dataloader_test, model_pd, model):
     return
     
     
-def logreg_and_rfc_acc(dataloader_train, dataloader_test, pi_type = 'default', model = None):
+def logreg_and_rfc_acc(dataloader_train, dataloader_test, pi_type = 'default', model = None, pimgr = None):
     print(pi_type)
     X_train, X_test = [], []
     y_train, y_test = [], []
@@ -488,10 +493,6 @@ def logreg_and_rfc_acc(dataloader_train, dataloader_test, pi_type = 'default', m
                 out = model(PI.to(device).unsqueeze(1))
                 approx_pi = out.squeeze(1).cpu()
         elif pi_type == 'from_pd':
-            pimgr = PersistenceImager(pixel_size=0.02)
-            pimgr.birth_range = (0, 1)
-            pimgr.pers_range = (0, 1)
-            pimgr.kernel_params['sigma'] = 0.0005
             with torch.no_grad():
                 pred_pds = model(src_data.to(device).unsqueeze(1).repeat(1, 3, 1, 1), mask.to(device))
             pred_pds = pred_pds.cpu()
@@ -521,10 +522,6 @@ def logreg_and_rfc_acc(dataloader_train, dataloader_test, pi_type = 'default', m
                 out = model(PI.to(device).unsqueeze(1))
                 approx_pi = out.squeeze(1).cpu()
         elif pi_type == 'from_pd':
-            pimgr = PersistenceImager(pixel_size=0.02)
-            pimgr.birth_range = (0, 1)
-            pimgr.pers_range = (0, 1)
-            pimgr.kernel_params['sigma'] = 0.0005
             with torch.no_grad():
                 pred_pds = model(src_data.to(device).unsqueeze(1).repeat(1, 3, 1, 1), mask.to(device))
             pred_pds = pred_pds.cpu().numpy()
@@ -588,13 +585,16 @@ if __name__ == "__main__":
                                            download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                              shuffle=False)
+       
+    pimgr = PersistenceImager(pixel_size=0.02)
+    pimgr.birth_range = (0, 1)
+    pimgr.pers_range = (0, 1)
+    pimgr.kernel_params['sigma'] = 0.0005 
     
     dataset_train, dataloader_train, n_max_train = get_datasets_pinet(batch_size=64, dataloader=trainloader, filtration='sublevel',
-                                                           is_train = True, sigma = 0.0005,  birth_range = (0, 1),
-                                                            pers_range = (0, 1), pixel_size = 0.02)
+                                                           is_train = True, pimgr = pimgr)
     dataset_test, dataloader_test, n_max_test = get_datasets_pinet(batch_size=64, dataloader=testloader, filtration='sublevel',
-                                                           is_train = False, sigma = 0.0005,  birth_range = (0, 1),
-                                                            pers_range = (0, 1), pixel_size = 0.02)
+                                                           is_train = False, pimgr = pimgr)
     n_max = max(n_max_train, n_max_test)
   
     model = train_full_image_model(dataloader_train, dataloader_test, n_max)
@@ -606,9 +606,9 @@ if __name__ == "__main__":
     
     logreg_and_rfc_acc(dataloader_train, dataloader_test, 'default')
     logreg_and_rfc_acc(dataloader_train, dataloader_test, 'pi-net', model = model_pinet)
-    logreg_and_rfc_acc(dataloader_train, dataloader_test, 'from_pd', model = model)
+    logreg_and_rfc_acc(dataloader_train, dataloader_test, 'from_pd', model = model, pimgr = pimgr)
     
     print('Metrics on PDs for full model')
-    compute_metrics(dataloader_test, model, on_pds = True)
+    compute_metrics(dataloader_test, model, on_pds = True, pimgr = pimgr)
     print('Metrics on PIs for PI-Net model')
-    compute_metrics(dataloader_test, model_pinet, on_pds = False) 
+    compute_metrics(dataloader_test, model_pinet, on_pds = False, pimgr = pimgr) 
